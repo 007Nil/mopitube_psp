@@ -146,13 +146,16 @@ src/
 
 ## Development
 
-A useful shell alias for rebuilding and syncing to the PSP memory stick (adjust the mount path):
+`deploy.sh` builds and copies `EBOOT.PBP` to a mounted PSP memory stick in one step:
 
 ```bash
-alias psp-deploy='make && cp EBOOT.PBP /media/$USER/MEMORY_STICK/PSP/GAME/MopiTube/'
+./deploy.sh                   # auto-detects the mount under /media/$USER, /run/media/$USER, /mnt
+./deploy.sh /path/to/mount    # or pass the mount root explicitly
 ```
 
-The standard edit/test cycle is: edit → `make` → copy `EBOOT.PBP` → run on PSP hardware.
+If a local `config.txt` exists it is copied too (without overwriting any existing one on the PSP).
+
+The standard edit/test cycle is: edit → `./deploy.sh` → eject → run on PSP hardware.
 
 ---
 
