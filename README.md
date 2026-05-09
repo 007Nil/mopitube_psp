@@ -2,8 +2,6 @@
 
 A PSP homebrew application that acts as a [Mopidy](https://mopidy.com/) remote control via the MPD protocol. Displays now-playing info, album artwork, and a seek bar on the PSP's native GPU renderer.
 
-![MopiTube icon](Mopitude.png)
-
 ---
 
 ## Features
