@@ -1,0 +1,14 @@
+# MopiTube configuration
+# Copy to: ms0:/PSP/GAME/MopiTube/config.txt
+
+# Mopidy server IP address (must be an IP, not a hostname)
+host=192.168.1.100
+
+# Mopidy-MPD port (default: 6600)
+port=6600
+
+# MPD password — leave empty if mopidy.conf has no password set
+password=
+
+# PSP Wi-Fi connection profile (1–9, as saved in PSP Network Settings)
+wifi_profile=1

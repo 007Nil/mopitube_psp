@@ -1,0 +1,14 @@
+# Build outputs
+*.o
+*.elf
+*.pbp
+*.PBP
+EBOOT.PBP
+MopiTube.elf
+PARAM.SFO
+
+# CMake
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
