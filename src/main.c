@@ -17,6 +17,7 @@ PSP_HEAP_SIZE_KB(20480);
 static volatile int g_running       = 1;
 static volatile int g_resume_pending = 0;  /* set by power cb on resume */
 static volatile int g_was_suspended  = 0;  /* sticky: skip net teardown on exit */
+static volatile int g_mpd_fd         = -1; /* readable by power callback */
 
 /* ── PSP exit callback ───────────────────────────────────────────────────── */
 
@@ -28,12 +29,18 @@ static int exit_callback(int arg1, int arg2, void *common) {
 
 /* PSP power callback. Flags are a bitfield (PSP_POWER_CB_*).
    We treat suspend as a destructive event: the Wi-Fi link goes down and
-   any open sockets become invalid. On resume we set g_resume_pending so
-   the main loop can drop its MPD socket and reconnect. */
+   any open sockets become invalid. On resume we (a) set g_resume_pending
+   so the main loop knows to do a full reconnect, and (b) shut down the
+   MPD socket so any in-flight recv() returns immediately instead of
+   blocking forever on a dead connection. */
 static int power_callback(int unknown, int pwrflags, void *common) {
     (void)unknown; (void)common;
-    if (pwrflags & PSP_POWER_CB_SUSPENDING)       g_was_suspended = 1;
-    if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)  g_resume_pending = 1;
+    if (pwrflags & PSP_POWER_CB_SUSPENDING) g_was_suspended = 1;
+    if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE) {
+        g_resume_pending = 1;
+        int fd = g_mpd_fd;
+        if (fd >= 0) net_tcp_shutdown(fd);
+    }
     return 0;
 }
 
@@ -109,6 +116,7 @@ int main(void) {
     }
     char banner[64] = "";
     int mpd_fd = mpd_connect(g_config.host, g_config.port, banner, sizeof(banner));
+    g_mpd_fd = mpd_fd;
     if (mpd_fd < 0) {
         char local_ip[16] = "?", gateway[16] = "?";
         net_get_local_ip(local_ip, sizeof(local_ip));
@@ -154,8 +162,12 @@ int main(void) {
             g_resume_pending = 0;
             ui_draw_status("Resumed. Reconnecting Wi-Fi...");
 
-            mpd_disconnect(mpd_fd);
-            mpd_fd = -1;
+            /* Clear g_mpd_fd before closing so a second resume callback
+               can't shutdown an fd we're about to free. */
+            int old_fd = mpd_fd;
+            g_mpd_fd   = -1;
+            mpd_fd     = -1;
+            if (old_fd >= 0) mpd_disconnect(old_fd);
             artwork_clear();
 
             /* Force apctl back to disconnected so net_wifi_connect() does
@@ -170,12 +182,14 @@ int main(void) {
             }
 
             ui_draw_status("Wi-Fi back. Reconnecting MPD...");
-            mpd_fd = mpd_connect(g_config.host, g_config.port, NULL, 0);
-            if (mpd_fd < 0) {
+            int new_fd = mpd_connect(g_config.host, g_config.port, NULL, 0);
+            if (new_fd < 0) {
                 ui_draw_status("MPD reconnect failed.\nRetrying...");
                 sceKernelDelayThread(3000 * 1000);
                 continue;
             }
+            mpd_fd   = new_fd;
+            g_mpd_fd = new_fd;
             if (g_config.password[0] != '\0')
                 mpd_password(mpd_fd, g_config.password);
 
@@ -209,15 +223,26 @@ int main(void) {
         if (last_poll == 0 || (now - last_poll) >= poll_interval) {
             if (mpd_currentsong(mpd_fd, &song) < 0 ||
                 mpd_status(mpd_fd, &status)    < 0) {
-                /* Lost connection — attempt one reconnect */
-                mpd_disconnect(mpd_fd);
+                /* Lost connection — close socket and reconnect. */
+                int old_fd = mpd_fd;
+                g_mpd_fd   = -1;
+                mpd_fd     = -1;
+                if (old_fd >= 0) mpd_disconnect(old_fd);
+
+                /* If a suspend caused this failure, the Wi-Fi link is also
+                   dead — don't waste time on a TCP connect that will hang.
+                   Defer to the top-of-loop full reconnect. */
+                if (g_resume_pending) continue;
+
                 sceKernelDelayThread(2000 * 1000);
-                mpd_fd = mpd_connect(g_config.host, g_config.port, NULL, 0);
-                if (mpd_fd < 0) {
+                int new_fd = mpd_connect(g_config.host, g_config.port, NULL, 0);
+                if (new_fd < 0) {
                     ui_draw_status("MPD disconnected. Retrying...");
                     sceKernelDelayThread(3000 * 1000);
                     continue;
                 }
+                mpd_fd   = new_fd;
+                g_mpd_fd = new_fd;
                 if (g_config.password[0] != '\0')
                     mpd_password(mpd_fd, g_config.password);
                 last_poll = 0;
@@ -238,6 +263,7 @@ int main(void) {
     }
 
     /* Cleanup */
+    g_mpd_fd = -1;
     if (mpd_fd >= 0) mpd_disconnect(mpd_fd);
     safe_shutdown();
     return 0;

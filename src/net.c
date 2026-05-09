@@ -76,7 +76,9 @@ int net_tcp_connect(const char *host_ip, int port) {
     int sock = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return -1;
 
-    struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+    /* 2 s — short enough that we recover quickly when the link goes down
+       (e.g. after a PSP suspend), long enough for normal MPD round-trips. */
+    struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
     sceNetInetSetsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     sceNetInetSetsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
@@ -96,6 +98,13 @@ int net_tcp_connect(const char *host_ip, int port) {
 void net_tcp_disconnect(int fd) {
     if (fd >= 0) sceNetInetClose(fd);
     rx_reset();
+}
+
+void net_tcp_shutdown(int fd) {
+    /* SHUT_RDWR (=2) — fail any in-flight or future I/O on this fd
+       without releasing it. Used from the power callback to break out
+       of a recv() that would otherwise block forever after resume. */
+    if (fd >= 0) sceNetInetShutdown(fd, 2);
 }
 
 int net_tcp_send(int fd, const char *data, int len) {

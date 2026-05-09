@@ -19,6 +19,11 @@ void net_shutdown(void);
 int  net_tcp_connect(const char *host_ip, int port);
 void net_tcp_disconnect(int fd);
 
+/* Force-unblock any pending send/recv on the socket without freeing the fd.
+   Safe to call from a callback thread to interrupt the main thread's recv,
+   e.g. after a PSP suspend leaves the underlying connection dead. */
+void net_tcp_shutdown(int fd);
+
 int  net_tcp_send(int fd, const char *data, int len);
 
 /* Read bytes until '\n'. Strips '\r'. Null-terminates buf.
