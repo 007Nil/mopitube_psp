@@ -1,5 +1,6 @@
 #include <pspkernel.h>
 #include <psprtc.h>
+#include <psppower.h>
 #include <stdio.h>
 
 #include "config.h"
@@ -13,7 +14,9 @@ PSP_MODULE_INFO("MopiTube", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_HEAP_SIZE_KB(20480);
 
-static volatile int g_running = 1;
+static volatile int g_running       = 1;
+static volatile int g_resume_pending = 0;  /* set by power cb on resume */
+static volatile int g_was_suspended  = 0;  /* sticky: skip net teardown on exit */
 
 /* ── PSP exit callback ───────────────────────────────────────────────────── */
 
@@ -23,10 +26,25 @@ static int exit_callback(int arg1, int arg2, void *common) {
     return 0;
 }
 
+/* PSP power callback. Flags are a bitfield (PSP_POWER_CB_*).
+   We treat suspend as a destructive event: the Wi-Fi link goes down and
+   any open sockets become invalid. On resume we set g_resume_pending so
+   the main loop can drop its MPD socket and reconnect. */
+static int power_callback(int unknown, int pwrflags, void *common) {
+    (void)unknown; (void)common;
+    if (pwrflags & PSP_POWER_CB_SUSPENDING)       g_was_suspended = 1;
+    if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)  g_resume_pending = 1;
+    return 0;
+}
+
 static int callback_thread(SceSize args, void *argp) {
     (void)args; (void)argp;
-    int cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
-    sceKernelRegisterExitCallback(cbid);
+    int exit_cbid = sceKernelCreateCallback("Exit Callback", exit_callback, NULL);
+    sceKernelRegisterExitCallback(exit_cbid);
+
+    int pwr_cbid = sceKernelCreateCallback("Power Callback", power_callback, NULL);
+    scePowerRegisterCallback(0, pwr_cbid);
+
     sceKernelSleepThreadCB();
     return 0;
 }
@@ -39,12 +57,20 @@ static void setup_callbacks(void) {
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
+/* Skip net_shutdown() if a suspend was ever observed: the PSP net stack
+   is left in a state where sceUtilityUnloadNetModule() can deadlock the
+   kernel, hanging the whole device. sceKernelExitGame() reclaims the
+   resources anyway. */
+static void safe_shutdown(void) {
+    if (!g_was_suspended) net_shutdown();
+    sceKernelExitGame();
+}
+
 /* Block with a message until HOME is pressed, then clean up. */
 static void fatal(const char *msg) {
     ui_draw_status(msg);
     while (g_running) sceKernelDelayThread(100 * 1000);
-    net_shutdown();
-    sceKernelExitGame();
+    safe_shutdown();
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -121,6 +147,43 @@ int main(void) {
 
     /* ── main loop ───────────────────────────────────────────────────────── */
     while (g_running) {
+        /* Resume from suspend: the Wi-Fi link is gone and the MPD socket
+           is dead. Drop everything and reconnect before doing anything
+           else this iteration. */
+        if (g_resume_pending) {
+            g_resume_pending = 0;
+            ui_draw_status("Resumed. Reconnecting Wi-Fi...");
+
+            mpd_disconnect(mpd_fd);
+            mpd_fd = -1;
+            artwork_clear();
+
+            /* Force apctl back to disconnected so net_wifi_connect() does
+               a fresh associate. The state after resume is unreliable. */
+            net_wifi_disconnect();
+            sceKernelDelayThread(500 * 1000);
+
+            if (net_wifi_connect(g_config.wifi_profile) != 0) {
+                ui_draw_status("Wi-Fi reconnect failed.\nWaiting...");
+                sceKernelDelayThread(3000 * 1000);
+                continue;   /* try again next loop */
+            }
+
+            ui_draw_status("Wi-Fi back. Reconnecting MPD...");
+            mpd_fd = mpd_connect(g_config.host, g_config.port, NULL, 0);
+            if (mpd_fd < 0) {
+                ui_draw_status("MPD reconnect failed.\nRetrying...");
+                sceKernelDelayThread(3000 * 1000);
+                continue;
+            }
+            if (g_config.password[0] != '\0')
+                mpd_password(mpd_fd, g_config.password);
+
+            last_poll = 0;
+            dirty     = 1;
+            continue;
+        }
+
         input_update();
 
         /* Transport commands */
@@ -175,8 +238,7 @@ int main(void) {
     }
 
     /* Cleanup */
-    mpd_disconnect(mpd_fd);
-    net_shutdown();
-    sceKernelExitGame();
+    if (mpd_fd >= 0) mpd_disconnect(mpd_fd);
+    safe_shutdown();
     return 0;
 }

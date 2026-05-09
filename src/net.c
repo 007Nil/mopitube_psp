@@ -45,6 +45,10 @@ void net_shutdown(void) {
     sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
 }
 
+void net_wifi_disconnect(void) {
+    sceNetApctlDisconnect();
+}
+
 int net_wifi_connect(int profile) {
     int state = 0;
 

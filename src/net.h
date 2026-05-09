@@ -7,6 +7,10 @@ int  net_init(void);
    or timeout (~10 s). Returns 0 on success. */
 int  net_wifi_connect(int profile);
 
+/* Drop the current Wi-Fi association without tearing down the net stack.
+   Use this after a PSP suspend to force a fresh associate on resume. */
+void net_wifi_disconnect(void);
+
 void net_shutdown(void);
 
 /* Open a blocking TCP connection to host_ip:port.

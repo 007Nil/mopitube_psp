@@ -16,6 +16,7 @@ LIBS = \
 	-lpspgu -lpspgum \
 	-lpspnet_resolver -lpspnet_inet -lpspnet_apctl \
 	-lpsputility \
+	-lpsppower \
 	-lpsprtc \
 	-lm
 

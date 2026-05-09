@@ -19,15 +19,18 @@ add_executable(MopiTube
     src/mpd.c
     src/input.c
     src/ui.c
+    src/artwork.c
+    src/http.c
 )
 
 target_compile_options(MopiTube PRIVATE -O2 -G0 -Wall -Wextra -std=c99)
 
 target_link_libraries(MopiTube
-    pspdebug pspdisplay pspge pspgu
+    intrafont jpeg png z
+    pspdebug pspdisplay pspge pspgu pspgum
     pspctrl
     pspnet pspnet_inet pspnet_apctl pspnet_resolver psputility
-    psprtc
+    psppower psprtc
     m
 )
 
